@@ -1,0 +1,441 @@
+---
+title: "Week6 - Improve bank term deposits volume at Hometown Bank"
+author: "Raju Penmetcha"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+# Overview 
+
+Analyze and understand bank customer attributes and preferred services used is necessary to grow term deposit volume at Hometown Bank. This will improve Hometown bank status, competitiveness in the marketplace and profitable. 
+
+
+# R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see http://rmarkdown.rstudio.com.
+
+
+# R Packages
+The packages you will need to install for this project include **rpart**, **rpart.plot**, **VIM**, **caret**, **RandomForest**, **mlbench**, **adabag**, **ROCR**, and **doSNOW**.
+
+
+# Purpose for the analysis 
+
+## Prediction Goal
+
+We will build multiple models to predict whether a bank customer is likely to subscribe to a bank term deposit? Additionally, we will identify predictors that tell us if a customer is more likely to subscribe to a term deposit?
+
+
+# Dataset
+
+Bank provided two datasets named bank-full.csv and bank.csv, the full version is larger dataset with 40,000 rows of and smaller sample dataset contained 4,000 rows, both having with 17attributes. For better full analysis used full dataset named "bank-full.csv" with 17 attributes for this analysis and model building.
+
+
+# Getting Started 
+
+Load dataset into workspace. 
+
+```{r}
+library(readr)
+getwd()
+setwd("C:/Users/Jupiter/Downloads/RU/BIA6301ADM/Homework/submission/week6/ADM_Wekk6_Project/data")
+
+# Small bank dataset
+#bank_org <- read_csv("C:/Users/Jupiter/Downloads/RU/BIA6301ADM/Homework/submission/week6/ADM_Wekk6_Project/data/bank.#csv")
+
+# Full bank dataset
+bank_org <- read_csv("C:/Users/Jupiter/Downloads/RU/BIA6301ADM/Homework/submission/week6/ADM_Wekk6_Project/data/bank-full.csv")
+
+```
+
+
+
+# Exploratory Data Analysis
+
+Explore the dataset structure, variables aggregate details, and value ranges, etc.
+
+
+```{r}
+# Summary of the dataset
+summary(bank_org)
+
+str(bank_org)
+
+```
+
+
+# Visulaize missing data
+
+Visulaize and understand variable data ranges, any missing data, and etc. 
+
+```{r}
+library(VIM)
+aggr_plot <- aggr(bank_org, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(bank_org), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
+
+hist(bank_org$`balance::number`)
+boxplot(bank_org$`balance::number`)
+hist(bank_org$`duration::number`)
+```
+
+**No missing values were found in the dataset variables for the analysis**
+
+
+# Rearrange and restructure data for proper analysis and model build.
+
+* Rearrange the target term deposit (output) yes or no variable as a first column.
+* Change categorical variables into factor variables.
+* Update variable names to more meaningful and easier to identify.
+
+```{r}
+bank <-bank_org[,c(17,1:16)] #Rearranging the columns so that our target variable is first
+#names(bank) <- make.names(names(bank))
+#bank_names <- strsplit(names(bank),"::") 
+# update the variable names 
+names(bank) <- make.names(c("termdeposit", "age", "job", "marital", "education", 
+                            "default", "balance", "housing", "loan", 
+                            "contact", "day", "month", "duration", "campaign", 
+                            "pdays", "previous", "poutcome"))
+
+names(bank)
+dim(bank)
+# Change catagorical variables to facotrs 
+bank$termdeposit <- as.factor(bank$termdeposit)
+bank$termdeposit <- relevel(bank$termdeposit,ref = "yes")
+bank$job <- as.factor(bank$job)
+bank$marital <- as.factor(bank$marital)
+bank$education <- as.factor(bank$education)
+bank$default <- as.factor(bank$default)
+bank$housing <- as.factor(bank$housing)
+bank$loan <- as.factor(bank$loan)
+bank$contact <- as.factor(bank$contact)
+bank$month <- as.factor(bank$month)
+bank$poutcome <- as.factor(bank$poutcome)
+
+summary(bank)
+
+#job1 <- factor(bank$job)
+#job1_dummy <- model.matrix(~job1-1)
+#summary(job1_dummy)
+#bank_numeric_vars <- bank[,c(2,7,11,13:16)]
+```
+
+
+**Normalize numeric variables and combine with rest of the categorical dummy variables**
+
+```{r}
+bank_num <-bank[,c(2,7,15)]
+normalize<- function(x){return((x-min(x))/(max(x)-min(x)))}
+bank_n<-as.data.frame(lapply(bank_num, normalize))
+summary(bank_n)
+
+bank <- cbind(bank[,c(-2,-7,-15)], bank_n)
+
+summary(bank)
+
+```
+
+
+# Create training and validation data set for analysis
+
+Let's do a training set of 80% and validation set of 20%. We will build a decision tree model on 80% of the data set and then test the model's performance on the other 20% of the data set.   
+
+```{r}
+set.seed(123) #set a seed to do draws from a random uniform distribution.
+# for bank's small dataset split
+#bank_rand <- bank[order(runif(4521)), ] 
+#bank_train <- bank_rand[1:4000, ] #Training data set; 4000 observations
+#bank_validate  <-bank_rand[4001:4521, ]
+
+# for bank's full dataset split
+bank_rand <- bank[order(runif(45211)), ] 
+bank_train <- bank_rand[1:36000, ] #Training data set; 36000 observations
+bank_validate  <-bank_rand[36001:45211, ] 
+```
+
+
+```{r}
+dim(bank_train) #checking the split
+dim(bank_validate) #checking the split
+prop.table(table(bank_train$termdeposit)) #checking to see the class proportions between the training and test sets. 
+prop.table(table(bank_validate$termdeposit))
+```
+
+Checking the proportions of term desposit variable in the trainining and validation sets. They are roughly the same. 11.71% in training set have term deposit; 11.613% in validation set have term deposit.
+
+
+
+# Analysis - Using superwised learning method of Decision Trees 
+
+
+## Decision Trees is a more sophisticated classification Model
+
+Decision trees follow recursive partitioning (top down greedy divide and conquer approach)
+
+1. Choose the attribute that is most predictive of the target variable
+
+2. Observations in the training data set are divided into groups of distinct values. This form the first set of branches.
+
+3. Continue to divide and conquer the nodes, choosing the feature with the most prediction power each time until one of three conditions occur:
+
+* all observations for a given node belong to the same class
+* no more remaining attributes for further partitioning
+* no observations are left
+
+
+## To perform multiple approaches, following different models are used for the analysis and to predict the customer likely subscribing to term deposit outcome.
+
+
+# Option 1: Using the rpart to Build a Decision Tree model
+
+```{r}
+library(rpart)
+library(rpart.plot)
+
+set.seed(123)
+bank_rpart <- rpart(bank_train$termdeposit~., method="class", parms = list(split="gini"), data=bank_train)
+#bank_rpart <- rpart(bank_train$termdeposit~., method="class", parms = list(split="information"), data=bank_train)
+
+summary(bank_rpart)
+
+plot(bank_rpart, uniform=TRUE, main="Classification Tree for Bank Term Deposite")
+text(bank_rpart, use.n=TRUE, all=TRUE, cex=0.8)
+
+# plot results into a graph
+library(rpart.plot)
+rpart.plot(bank_rpart, type=0, extra=101)
+rpart.plot(bank_rpart, type=1, extra=101)
+```
+
+
+## Run rpart model validation
+
+```{r}
+library(caret)
+actual <- bank_validate$termdeposit
+predicted_rpart <- predict(bank_rpart, bank_validate, type="class")
+results.matrix_rpart <- confusionMatrix(predicted_rpart, actual, positive="yes")
+print(results.matrix_rpart)
+```
+
+*Option 1: Accuracy rate is 90%, but the sensitivity (how well does the decision tree classified likely term deposit subscriber correctly) is only 35%. Furthermore, the specificity (how well does the decision tree classified non-subscriber of term deposit correctly) is 97%. Our decision tree model does a better job classifying the non-subscriber of term deposit better than the subscriber of the term deposit. KAPA is 0.39* 
+
+
+
+# Option 2: Using the C5.0 to Build a Decision Tree model
+
+## Create training and test sets for the C5.0 model 
+
+```{r}
+set.seed(123) #set a seed to do draws from a random uniform distribution.
+bank_c50_rand <- bank[order(runif(45211)), ] 
+
+# use same rand data from above to be consistance 
+bank_c50_train <- bank_rand[1:36000,c(-1)] #Training data set; observations 80% of sample
+bank_c50_test  <- bank_rand[36001:45211,c(-1)] # Test data seet; observations 20% of sample
+
+bank_c50_train_labels <- bank_rand[1:36000,c(1) ]
+bank_c50_test_lables  <- bank_rand[36001:45211,c(1) ] 
+```
+
+
+## Use C50 pakage for decision tree 
+
+```{r}
+library(C50)
+library(partykit)
+set.seed(123)
+
+bank_pred_c50 <- C50::C5.0(bank_c50_train, bank_c50_train_labels, trials=1)
+
+summary(bank_pred_c50)
+#bank_pred_c50_party <- as.party(C50::C5.0(bank_c50_train, bank_c50_train_labels, trials=1))
+#plot(bank_pred_c50_party[1])
+```
+
+
+## Run test data using the c5.0 model and validate
+
+```{r}
+
+library(caret)
+actual_c50 <- bank_c50_test_lables
+predicted_c50 <- predict(bank_pred_c50, bank_c50_test, type="class")
+#summary(predicted_c50)
+results.matrix_c50 <- confusionMatrix(predicted_c50, actual_c50, positive="yes")
+print(results.matrix_c50)
+
+```
+
+* Option 2: Accuracy rate is 90%, but the sensitivity (how well does the decision tree classified likely term deposit subscriber correctly) is improved to 45%. Furthermore, the specificity (how well does the decision tree classified non-subscriber of term deposit correctly) is 96%. Our C5.0 decision tree model does a better job classifying the non-subscriber of term deposit than the likely subscriber of the term deposit. KAPA is 0.46.
+
+
+
+# Other options: Improving Model Performance: Ensemble Models Approach
+
+One decision tree suffers from high variance. The resulting tree depends on the training data. What we want is a procedure with low variance--meaning we should see similar results if the tree is applied repeatedly to distinct datasets. We will examine three ensemble models that are built on the basic decision trees:
+
+1. Bagging (bootstrap aggregation)  
+2. Random forests (many trees = a forest)  
+
+
+## Option 3: Bagging
+
+Bagging is a 4 step process:  
+
+1. Generate B bootstrap samples from the training set.  
+
+2. Construct decision trees for all B bootstrap samples.  
+
+3. For each given test observation, we record the class predicted by each of the B trees.  
+
+4. The overall prediction is the most commonly occuring class among the B predictions. Majority voting wins.
+
+Bagging averages many trees so it reduces the variance of the instability of generating just one tree. Bagging leads to improved prediction. The tradeoff is you lose interpretability and the ability to see simple structure in a tree.
+
+
+```{r}
+library(randomForest)
+set.seed(123) 
+
+#Set mtry to equal all predictors. This means all predictors should be considered at each split. This is what makes it "bagging." The default number of trees is 500.
+names(bank_train) <- make.names(names(bank_train))
+
+bank.bag <- randomForest(termdeposit~., mtry=16, data=bank_train, na.action=na.omit, importance=TRUE)
+```
+
+
+### Out of Bag (OOB) Error 
+
+```{r}
+print(bank.bag) #note the "out of bag" (OOB) error rate. 
+```
+
+
+### What are the important predictors in our bagging model? 
+
+Look at the mean decrease in accuracy of predictions in the OOB samples when a given variable is excluded.
+
+```{r}
+importance(bank.bag, type=1)
+```
+
+Look at the mean decrease in node impurity resulting from splits over that variable.  
+
+```{r}
+importance(bank.bag, type=2)
+varImpPlot(bank.bag)
+```
+
+```{r}
+actual <- bank_validate$termdeposit
+bank_predicted_bag <- predict(bank.bag, newdata=bank_validate, type="class") 
+bank_results.matrix.bag <- confusionMatrix(bank_predicted_bag, actual, positive="yes") 
+print(bank_results.matrix.bag)
+```
+
+* Option 3: Accuracy rate is 90%, but the sensitivity (how well does the decision tree classified likely term deposit subscriber correctly) is 45%. The specificity (how well does the decision tree classified non-subscriber of term deposit correctly) is 96%. Bagging decision tree model also does a better job classifying the non-subscriber of term deposit than the likely subscriber of the term deposit. KAPA is 0.47.
+
+
+
+## Option 4: Random Forest
+
+Random forests consider only a subset of the predictors at each split. This means the node splits are not dominated by one or a few strong predictors, and, thus, give other (i.e. less strong) predictors more chances to be used. When we average the resulting trees, we get more reliable results since the individual trees are not dominated by a few strong predictors.
+
+Random forests generate a large number of classification trees, and then does a majority vote to generate prediction.
+
+
+```{r}
+bank.RForest <- randomForest(termdeposit ~.,data=bank_train, mtry=16, ntree=500,na.action = na.omit, importance=TRUE) 
+
+print(bank.RForest) 
+importance(bank.RForest) 
+varImpPlot(bank.RForest)
+```
+
+## Random Forest 
+
+```{r}
+
+actual <- bank_validate$termdeposit
+bank_predicted_rf <- predict(bank.RForest, newdata=bank_validate, type="class") 
+bank_results.matrix.rf <- confusionMatrix(bank_predicted_rf, actual, positive="yes") 
+print(bank_results.matrix.rf)
+```
+
+
+* Option 4: Accuracy rate is 90%, but the sensitivity (how well does the decision tree classified likely term deposit subscriber correctly) is improved to 46%. The specificity (how well does the decision tree classified non-subscriber of term deposit correctly) is 96%. Random Forest decision tree model also does a better job classifying the non-subscriber of term deposit than the likely subscriber of the term deposit. KAPA is 0.48.
+
+
+**KAPA Reference**
+Kappa "adjusts accuracy by accounting for the possibility of a correct prediction by **chance alone.** Kappa values range to a maximum number of 1, which indicates perfect agreement between the model's predictions and the true values--a rare occurrence. Values less than one indicate imperfect agreement" (Lantz 2013, p. 303)
+
+Landis and Koch (1977): 0-20 => slight, 0.21-.40 => fair, 0.41-0.6 => moderate, 0.61-0.8 => substantial, 0.81 -1 => almost perfect
+
+Fleiss (1981): 0-.40 => poor; 0.41-0.75 => fair to good; 0.75 – 1 => excellent.
+
+
+# Following is the summary of model analysis and performance information 
+
+```{}
+|---------------------------------------------------------------|
+|               |  rpart  |  C5.0  |  Bagging  |  RandomForest  |   
+|---------------|---------|--------|-----------|----------------|
+| Accuracy      |  90%    |  90%   |   90%     |     90%        |
+| Sensitivity   |  35%    |  45%   |   45%     |     46%        |
+| Specificity   |  97%    |  96%   |   96%     |     96%        |
+| KAPA          |  0.39   |  0.46  |   0.47    |     0.48       |
+|---------------------------------------------------------------|
+
+```
+
+* Based the performance of Accuracy, Sensitivity, Specificity, and KAPA measurements, the Random Forest model to be marginally better to other models and it is taken into consideration for the recommendation. Speciic details for recommendation are considered from C5.0 model details.
+
+
+# Significant Predictors
+
+*Based on the analysis following customer attributes and facotrs found to be significant predictors to asses a customer likley to subscribe for term deposit.*
+
+* Duration - last contact duration with customer in seconds.
+
+* Poutcome - outcome of the privious marketing campaign.
+
+* Last contact month of year (jan to dec).
+
+* Last contact day of the month (1-31).
+
+* Average yearly balance in Euros.
+
+* Customer Age.
+
+* Customer has a housing loan.
+
+
+
+# Final Recommendations
+
+**To increase term deposit subscription volume at Hometown Bank and improve its status in marketplace and profitablity. Following customer outreach and campaign action items are recommended to Hometown Bank managment.**
+
+* Create a marketing campaign with incentives for customers to open new term deposit with the Hometown Bank. Reach out to the customers when the visit the branch and provide complete details and benefits of term deposit in personal financial planning. Analysis has showed that when customer is in contact with bank for service or help for more than 5 minutes the customer is likely to subscribe to term deposits if it is presented.
+
+
+* Initiate customer outreach effort during the months of March, September, October, and December. These months identified to be more effective month in a year to reach out to the customers for term deposit subscriptions.
+
+
+* Perform a customer segmentation analysis based on customer age, housing loan, and previous campaign success. And do a target outreach to customer segment who are younger than 54 years and had no housing loan and bank has successful out come from earlier campaign. Analysis showed this customer group to be very likely to subscribe to term deposit.
+
+
+* Create a new customer relations management repository and establish profile for each customer and house different contact points and preference in the system. This gives bank to achieve successful outcomes for increase in term deposit and other service to the customer. Because the analysis has showed offering new bank services to customer during certain days of the month and contacting them on their preferred phone, like cellular, etc. will provide high success rate.
+
+
+
+
+
+
+
+
+
+
+
+
+
